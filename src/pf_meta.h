@@ -19,6 +19,8 @@ typedef int32_t Page;
  * 这里使用int代替，其大小一致
  */
 
-const int PF_PAGE_SIZE = 4096 - sizeof(int32_t);
+const int32_t PF_PAGE_SIZE = 4096 - sizeof(int32_t);
+const int32_t PF_BUFFER_SIZE = 40;    // number of pages in the buffer
+const int32_t PF_HASH_TBL_SIZE = 20;  // size of hash table in buffer
 
 #endif

@@ -23,15 +23,15 @@ class PF_HashTable {
   };
 
 public:
-  PF_HashTable(int32_t buckets);
+  PF_HashTable(const int32_t buckets);
   ~PF_HashTable();
 
-  RC find(int32_t fd, Page page_num, int32_t &slot);
-  RC insert(int32_t fd, Page page_num, int32_t slot);
-  RC remove(int32_t fd, Page page_num);
+  RC find(const int32_t fd, const Page page_num, int32_t &slot);
+  RC insert(const int32_t fd, const Page page_num, const int32_t slot);
+  RC remove(const int32_t fd, const Page page_num);
 
 private:
-  int32_t hash(int32_t fd, Page page_num) const { return ((fd + page_num) % m_buckets); }
+  int32_t hash(const int32_t fd, const Page page_num) const { return ((fd + page_num) % m_buckets); }
 
 private:
   int32_t m_buckets;

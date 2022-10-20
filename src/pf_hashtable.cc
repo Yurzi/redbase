@@ -5,7 +5,7 @@
 
 #include <cstdint>
 
-PF_HashTable::PF_HashTable(int32_t buckets) : m_buckets(buckets) {
+PF_HashTable::PF_HashTable(const int32_t buckets) : m_buckets(buckets) {
   // Allocate memory for hash tabe
   m_hash_table = new PF_HashEntry *[m_buckets];
 
@@ -40,7 +40,7 @@ PF_HashTable::~PF_HashTable() {
  *     slot - set to slot associated with fd and page_num
  * Ret: PF return code
  */
-RC PF_HashTable::find(int32_t fd, Page page_num, int32_t &slot) {
+RC PF_HashTable::find(const int32_t fd, const Page page_num, int32_t &slot) {
   // get which bucket it should be in
   int32_t bucket = this->hash(fd, page_num);
   slot = INVALID_SLOT;
@@ -70,7 +70,7 @@ RC PF_HashTable::find(int32_t fd, Page page_num, int32_t &slot) {
  *     slot - slot associated with fd and page_num
  * Ret: PF return code
  */
-RC PF_HashTable::insert(int32_t fd, Page page_num, int32_t slot) {
+RC PF_HashTable::insert(const int32_t fd, const Page page_num, const int32_t slot) {
   // get which bucket it should be in
   int32_t bucket = this->hash(fd, page_num);
 
@@ -107,7 +107,7 @@ RC PF_HashTable::insert(int32_t fd, Page page_num, int32_t slot) {
  *     page_num - page number
  * Ret: PF return code
  */
-RC PF_HashTable::remove(int32_t fd, Page page_num) {
+RC PF_HashTable::remove(const int32_t fd, const Page page_num) {
   // get which bucket it should be in
   int32_t bucket = this->hash(fd, page_num);
 

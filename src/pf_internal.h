@@ -8,23 +8,23 @@
  * - PF_PAGE_LIST_END -> 页面是最后一个空闲页面
  * - PF_PAGE_USED -> 页面不是空闲的
  */
-struct PFPageHdr {
+struct PF_PageHdr {
   int free;
 };
 
 /*
  * 文件头的部分
- * |free| - PFFileHdr
+ * |free| - PF_FileHdr
  * |size|
  *  ...
- * |free| - PFPageHdr
+ * |free| - PF_PageHdr
  */
-struct PFFileHdr {
+struct PF_FileHdr {
   int32_t free;
   uint32_t size;
 };
 
-const int32_t PF_FILE_HDR_SIZE = PF_PAGE_SIZE + sizeof(PFPageHdr);
+const int32_t PF_FILE_HDR_SIZE = PF_PAGE_SIZE + sizeof(PF_PageHdr);
 
 #define MEMORY_FD (-1)
 
