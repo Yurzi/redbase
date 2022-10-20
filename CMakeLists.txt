@@ -19,8 +19,10 @@ option(ENABLE_TEST "Whether or not to enable tests" OFF)
 set(CMAKE_BUILD_TYPE "Debug")
 
 # [Source]
+include_directories(${PROJECT_SOURCE_DIR}/src)
 set(SRC_LIST
   src/pf_error.cc
+  src/pf_hashtable.cc
   )
 
 # [Targets]
@@ -41,6 +43,7 @@ if (${ENABLE_TEST})
   # 注意需要在tests目录下创建于test_name同名的源文件 如 test_name.cc
 
   add_unit_test(project_setting ${PROJECT_NAME})
+  add_unit_test(pf_hashtable ${PROJECT_NAME})
 
 else ()
   message (STATUS "Tests is off")
