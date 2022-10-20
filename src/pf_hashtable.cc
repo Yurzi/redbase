@@ -1,69 +1,146 @@
 #include "pf_hashtable.h"
-#include "pf_buffer.h"
 #include "pf_error.h"
+#include "pf_meta.h"
 #include "redbase_meta.h"
 
-PFHashTable::PFHashTable(uint32_t capacity)
-  : capacity_(capacity)
-  , table_(capacity) {}
+#include <cstdint>
+
+PF_HashTable::PF_HashTable(int32_t buckets) : m_buckets(buckets) {
+  // Allocate memory for hash tabe
+  m_hash_table = new PF_HashEntry *[m_buckets];
+
+  // Initialize all buckets to empty
+  for (int32_t i = 0; i < m_buckets; ++i) {
+    m_hash_table[i] = nullptr;
+  }
+}
+
+PF_HashTable::~PF_HashTable() {
+  // Clear all buckets
+  for (int32_t i = 0; i < m_buckets; ++i) {
+    // Delete all entries in this bucket
+    PF_HashEntry *entry = m_hash_table[i];
+    while (entry != nullptr) {
+      PF_HashEntry *next = entry->next;
+      delete entry;
+      entry = next;
+    }
+  }
+
+  // Finally delete the table
+  delete[] m_hash_table;
+}
 
 /*
- * search - 在表中搜寻这样的三元组，找到了，返回，否则返回 -1
+ * find
+ *
+ * Desc: Find a hash tabe entry.
+ * In: fd - file descriptor
+ *     page_num - page number
+ *     slot - set to slot associated with fd and page_num
+ * Ret: PF return code
  */
-RC PFHashTable::search(int32_t fd, Page num, int32_t& slot) {
+RC PF_HashTable::find(int32_t fd, Page page_num, int32_t &slot) {
+  // get which bucket it should be in
+  int32_t bucket = this->hash(fd, page_num);
   slot = INVALID_SLOT;
-  int32_t key = calc_hash(fd, num);
-  if (key < 0)
-    return PF_HASHNOTFOUND;
 
-  std::list<Triple> &lst = table_[key];
-  // 迭代
-  std::list<Triple>::const_iterator it;
-  for (it = lst.begin(); it != lst.end(); ++it) {
-    if ((it->fd == fd) && (it->num == num)) {
-      slot = it->slot;
+  if (bucket < 0) {
+    return PF_HASHNOTFOUND;
+  }
+
+  // go through the linked list of this bucket
+  for (PF_HashEntry *entry = m_hash_table[bucket]; entry != nullptr; entry = entry->next) {
+    if (entry->fd == fd && entry->page_num == page_num) {
+      // find it
+      slot = entry->slot;
       return OK_RC;
     }
   }
+
   return PF_HASHNOTFOUND;
 }
 
 /*
- * insert - 往hash表中插入一个元素
+ * insert
+ *
+ * Desc: insert a hash table entry
+ * In: fd - file descriptor
+ *     page_num - page number
+ *     slot - slot associated with fd and page_num
+ * Ret: PF return code
  */
-RC PFHashTable::insert(int32_t fd, Page num, int32_t slot) {
-  int32_t key = calc_hash(fd, num);
-  if (key < 0)
-    return false;
+RC PF_HashTable::insert(int32_t fd, Page page_num, int32_t slot) {
+  // get which bucket it should be in
+  int32_t bucket = this->hash(fd, page_num);
 
-  std::list<Triple> &lst = table_[key];
-  std::list<Triple>::const_iterator it;
-  // table 中不能存在这样的entry
-  for (it = lst.begin(); it != lst.end(); ++it) {
-    if ((it->fd == fd) && (it->num == num)) {
+  // check entry doesn't already exist in the bucket
+  PF_HashEntry *entry = nullptr;
+  for (entry = m_hash_table[bucket]; entry != nullptr; entry = entry->next) {
+    if (entry->fd == fd && entry->page_num == page_num) {
       return PF_HASHPAGEEXIST;
     }
   }
-  lst.push_back(Triple(fd, num, slot));
+  // allocate memory for new hash entry
+  if ((entry = new PF_HashEntry) == nullptr) {
+    return PF_NOMEM;
+  }
+
+  // insert entry at the head of list for this bucket
+  entry->fd = fd;
+  entry->page_num = page_num;
+  entry->slot = slot;
+  entry->next = m_hash_table[bucket];
+  entry->prev = nullptr;
+  if (m_hash_table[bucket] != nullptr) {
+    m_hash_table[bucket]->prev = entry;
+  }
+  m_hash_table[bucket] = entry;
   return OK_RC;
 }
 
 /*
- * remove - 从hash表中移除一个元素
+ * remove
+ *
+ * Desc: remove a hash tabe entry
+ * In: fd - file descriptor
+ *     page_num - page number
+ * Ret: PF return code
  */
-RC PFHashTable::remove(int32_t fd, Page num) {
-  int key = calc_hash(fd, num);
-  if (key < 0)
-    return PF_HASHNOTFOUND;
+RC PF_HashTable::remove(int32_t fd, Page page_num) {
+  // get which bucket it should be in
+  int32_t bucket = this->hash(fd, page_num);
 
-  std::list<Triple> &lst = table_[key];
-  std::list<Triple>::const_iterator it;
-  // table 中不能存在这样的entry
-  for (it = lst.begin(); it != lst.end(); ++it) {
-    if ((it->fd == fd) && (it->num == num)) {
-      lst.erase(it);
-      return OK_RC;
+  // find the entry is in this bucket
+  PF_HashEntry *entry = nullptr;
+  for (entry = m_hash_table[bucket]; entry != nullptr; entry = entry->next) {
+    if (entry->fd == fd && entry->page_num == page_num) {
+      break;
     }
   }
-  return PF_HASHNOTFOUND;
+
+  // check the search result
+  if (entry == nullptr) {
+    return PF_HASHNOTFOUND;
+  }
+
+  // remove this entry
+  if (entry == m_hash_table[bucket]) {
+    // if the entry is the head of this list
+    m_hash_table[bucket] = entry->next;
+  }
+  if (entry->prev != nullptr) {
+    // if the entry has prev entry
+    entry->prev->next = entry->next;
+  }
+  if (entry->next != nullptr) {
+    // if the entry has next entry
+    entry->next->prev = entry->prev;
+  }
+
+  // preform the delete
+  delete entry;
+
+  // return OK
+  return OK_RC;
 }

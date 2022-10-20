@@ -24,7 +24,7 @@ set(SRC_LIST
   src/utils.cc
   src/pf_error.cc
   src/pf_hashtable.cc
-  src/pf_buffer.cc
+  #  src/pf_buffer.cc
   )
 
 # [Targets]

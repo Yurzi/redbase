@@ -1,43 +1,42 @@
-#ifndef __PF_HASHTABLE_H__
-#define __PF_HASHTABLE_H__
+//
+// File: pf_hashtable.h
+// Desc: PF_HashTable class interface
+//
+
+#ifndef __PF_HASHTABEL_H__
+#define __PF_HASHTABEL_H__
 
 #include <cstdint>
-#include <list>
-#include <vector>
 
-#include "redbase_meta.h"
 #include "pf_meta.h"
+#include "redbase_meta.h"
 
-/*
- *  PFHashTable 记录了fd指代的文件的第num个页面在哪个slot里
- *  使用拉链法的HashTable
- */
-class PFHashTable {
-  struct Triple {
-    int32_t fd;
-    Page num;
-    int32_t slot;
-    Triple(int32_t fd, Page num, int32_t slot)
-      : fd(fd)
-      , num(num)
-      , slot(slot) {}
+#define INVALID_SLOT (-1)
+
+class PF_HashTable {
+  struct PF_HashEntry {
+    PF_HashEntry *prev = nullptr;
+    PF_HashEntry *next = nullptr;
+    int32_t fd = -1;
+    Page page_num = 0;
+    int32_t slot = INVALID_SLOT;
   };
 
 public:
-  PFHashTable(uint32_t capacity);
-  ~PFHashTable() {}
+  PF_HashTable(int32_t buckets);
+  ~PF_HashTable();
 
-public:
-  RC search(int32_t fd, Page num, int32_t& slot);
-  RC insert(int32_t fd, Page num, int32_t slot);
-  RC remove(int32_t fd, Page num);
-
-private:
-  int32_t calc_hash(int32_t fd, Page num) { return (fd + num) % capacity_; }
+  RC find(int32_t fd, Page page_num, int32_t &slot);
+  RC insert(int32_t fd, Page page_num, int32_t slot);
+  RC remove(int32_t fd, Page page_num);
 
 private:
-  uint32_t capacity_;
-  std::vector<std::list<Triple>> table_;
+  int32_t hash(int32_t fd, Page page_num) const { return ((fd + page_num) % m_buckets); }
+
+private:
+  int32_t m_buckets;
+  PF_HashEntry **m_hash_table = nullptr;
 };
 
-#endif /* __PF_HASHTABLE_H__ */
+
+#endif  // !__PF_HASHTABEL_H__
