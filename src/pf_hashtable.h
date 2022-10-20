@@ -5,6 +5,7 @@
 #include <list>
 #include <vector>
 
+#include "redbase_meta.h"
 #include "pf_meta.h"
 
 /*
@@ -27,12 +28,12 @@ public:
   ~PFHashTable() {}
 
 public:
-  int32_t search(int32_t fd, Page num);
-  bool insert(int32_t fd, Page num, int32_t slot);
-  bool remove(int32_t fd, Page num);
+  RC search(int32_t fd, Page num, int32_t& slot);
+  RC insert(int32_t fd, Page num, int32_t slot);
+  RC remove(int32_t fd, Page num);
 
 private:
-  int calc_hash(int32_t fd, Page num) { return (fd + num) % capacity_; }
+  int32_t calc_hash(int32_t fd, Page num) { return (fd + num) % capacity_; }
 
 private:
   uint32_t capacity_;

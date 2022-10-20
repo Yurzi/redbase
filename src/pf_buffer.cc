@@ -3,7 +3,7 @@
 #include "pf_internal.h"
 #include "redbase_meta.h"
 #include "utils.h"
-#include <unistd.h>
+#include <cstdint>
 
 PFBuffer::PFBuffer()
   : table_(capacity / 2) {
@@ -17,23 +17,32 @@ PFBuffer::PFBuffer()
   }
 }
 /*
- *  get_page - 获取一个指向缓存空间的指针
+ *  get_page - 获取一个指向缓存空间的指针,  同时将其pin在buffer上
  */
 RC PFBuffer::get_page(int32_t fd, Page num, Ptr &addr) {
-  int32_t slot = table_.search(fd, num);
-  if (slot != INVALID_SLOT) {
+  RC rc = OK_RC;
+  int32_t slot = INVALID_SLOT;
+
+  rc = table_.search(fd, num, slot);
+  if (slot != INVALID_SLOT && rc != PF_HASHNOTFOUND) {
     // 页面已经在缓存中 增加pin计数
     slots_[slot].count++;
     addr = slots_[slot].buffer;
-    return OK_RC;
-  }
-  // 分配一个空的页
-  RC rc = alloc_page(fd, num, addr);
-  if (rc != OK_RC)
-    return rc;
-  // 读入数据
-  read_page(fd, num, addr);
+  } else {
+    if ((rc = fetch_avaliable_slot(slot))) {
+      return rc;
+    }
 
+    // read_page insert it into hashtable and initialize the slot entry
+    if ((rc = read_page(fd, num, slots_[slot].buffer)) ||
+        (rc = table_.insert(fd, num, slot)) ||
+        (rc = init_slot(fd, num, slot))) {
+      return rc;
+    }
+  }
+  // Make this page the most recently used page
+  if ((rc = this->unlink(slot)) || (rc = this->link_head(slot)))
+    return rc;
   return OK_RC;
 }
 
@@ -41,22 +50,22 @@ RC PFBuffer::get_page(int32_t fd, Page num, Ptr &addr) {
  * alloc_page - 分配一个页面
  */
 RC PFBuffer::alloc_page(int32_t fd, Page num, Ptr &addr) {
-  int32_t slot = table_.search(fd, num);
-  if (slot != INVALID_SLOT)
+  RC rc = OK_RC;
+  int32_t slot = INVALID_SLOT;
+
+  rc = table_.search(fd, num, slot);
+  if (slot != INVALID_SLOT && rc != PF_HASHNOTFOUND)
     return PF_PAGEINBUF;
 
   // 分配空页
-  slot = fetch_avaliable_slot();
+  rc = fetch_avaliable_slot(slot);
   if (slot == INVALID_SLOT)
     return PF_NOBUF;
 
-  table_.insert(fd, num, slot);
-  slots_[slot].fd = fd;
-  slots_[slot].num = num;
-  slots_[slot].count = 1;
-  slots_[slot].is_dirty = false;
-  this->unlink(slot);
-  this->insert_free(slot);
+  if ((rc = table_.insert(fd, num, slot)) || (rc = init_slot(fd, num, slot))) {
+    this->unlink(slot);
+    this->link_head(slot);
+  }
 
   addr = slots_[slot].buffer;
   return OK_RC;
@@ -66,7 +75,10 @@ RC PFBuffer::alloc_page(int32_t fd, Page num, Ptr &addr) {
  * mark_dirty - 将页面标记为dirty
  */
 RC PFBuffer::mark_dirty(int32_t fd, Page num) {
-  int32_t slot = table_.search(fd, num);
+  RC rc = OK_RC;
+  int32_t slot = INVALID_SLOT;
+
+  rc = table_.search(fd, num, slot);
   if (slot == INVALID_SLOT)
     return PF_PAGENOTINBUF;
 
@@ -74,58 +86,228 @@ RC PFBuffer::mark_dirty(int32_t fd, Page num) {
     return PF_PAGEUNPINNED;
   // 标记为脏页
   slots_[slot].is_dirty = true;
+
+  // make this page the most recently used page
+  if ((rc = this->unlink(slot)) || (rc = this->link_head(slot)))
+    return rc;
+
   return OK_RC;
 }
 
 RC PFBuffer::unpin(int32_t fd, Page num) {
-  int32_t slot = table_.search(fd, num);
+  RC rc = OK_RC;
+  int32_t slot = INVALID_SLOT;
+
+  rc = table_.search(fd, num, slot);
+  // the page must be found and pinned in the buffer
   if (slot != INVALID_SLOT)
     return PF_PAGENOTINBUF;
+
+  if (slots_[slot].count == 0) {
+    return PF_PAGEUNPINNED;
+  }
+
+  // if unpinning the last pin, make it the most recently used page
   slots_[slot].count -= 1;
+  if (slots_[slot].count == 0) {
+    if ((rc = this->unlink(slot)) || (rc = this->link_head(slot)))
+      return rc;
+  }
+
   return OK_RC;
 }
-RC PFBuffer::pin(int32_t fd, Page num) { return OK_RC; }
-RC PFBuffer::force_page(int32_t fd, Page num) { return OK_RC; }
-void PFBuffer::clear_file_pages(int32_t fd) {}
-RC PFBuffer::flush(int32_t fd) { return OK_RC; }
+
 
 /*
- * search_avaliable_node - 获取一个可用的slot 使用LRU
+ * pin
+ *
+ * Desc: public. manually pin a page in buffer to avoid it be cleand
+ * In: fd - file descriptor
+ *     num - page number
+ * Ret: PF return code
  */
-int32_t PFBuffer::fetch_avaliable_slot() {
+RC PFBuffer::pin(int32_t fd, Page num) {
   RC rc = OK_RC;
-  int32_t slot = 0;
+  int32_t slot = INVALID_SLOT;
+
+  rc = table_.search(fd, num, slot);
+  if (rc != PF_HASHNOTFOUND && slot != INVALID_SLOT) {
+    // page in buffer
+    slots_[slot].count++;
+  } else {
+    // add the page to buffer like get_page
+    if ((rc = fetch_avaliable_slot(slot))) {
+      return rc;
+    }
+
+    // read_page insert it into hashtable and initialize the slot entry
+    if ((rc = read_page(fd, num, slots_[slot].buffer)) ||
+        (rc = table_.insert(fd, num, slot)) ||
+        (rc = init_slot(fd, num, slot))) {
+      return rc;
+    }
+  }
+  // make this page the most recently used
+  if ((rc = this->unlink(slot)) || (rc = this->link_head(slot)))
+    return rc;
+  return OK_RC;
+}
+
+/*
+ * force_page
+ *
+ * Desc: public. forcely write a page to file in any condition
+ * In: fd - file descriptor
+ *     num - page number if ALL_PAGES is be used all pages will be wrte back
+ * Ret: PF return code
+ */
+RC PFBuffer::force_pages(int32_t fd, Page num) {
+  RC rc = OK_RC;
+  std::vector<int32_t> temp;
+  for (int32_t slot = last_; slot != INVALID_SLOT; slot = slots_[slot].prev) {
+    if (slots_[slot].fd == fd &&
+        (num == ALL_PAGES || slots_[slot].num == num)) {
+      if (slots_[slot].is_dirty) {
+        if ((rc = write_back(slots_[slot].fd, slots_[slot].num,
+                             slots_[slot].buffer)))
+          return rc;
+        slots_[slot].is_dirty = false;
+        if (slots_[slot].count == 0) {
+          // lazy for unused page recycle.
+          temp.push_back(slot);
+        }
+      }
+    }
+  }
+
+  // perform the recycle
+  for (const int32_t idx : temp) {
+    if ((rc = table_.remove(slots_[idx].fd, slots_[idx].num)) ||
+        (rc = this->unlink(idx)) || (rc = this->insert_free(idx))) {
+      return rc;
+    }
+  }
+
+  return OK_RC;
+}
+
+/*
+ * clear_file_pages
+ *
+ * Desc: public. flush all dirty page into disk for a file and
+ *               recycle the unpinned page to free list
+ * In: fd - file descriptor
+ * Ret: PF return code
+ */
+RC PFBuffer::clear_file_pages(int32_t fd) {
+  RC rc = OK_RC;
+  std::vector<int32_t> temp;
+
+  // iterator for the used list
+  for (int32_t slot = last_; slot != INVALID_SLOT; slot = slots_[slot].prev) {
+    if (slots_[slot].fd == fd && slots_[slot].is_dirty) {
+      // write back the dirty pages
+      if ((rc = write_back(slots_[slot].fd, slots_[slot].num,
+                           slots_[slot].buffer)))
+        return rc;
+      slots_[slot].is_dirty = false;
+    }
+
+    if (slots_[slot].count == 0) {
+      // recycle the unused page to free list. due to the list iterator, lazy.
+      temp.push_back(slot);
+    }
+  }
+  // perform the recycle
+  for (const int32_t idx : temp) {
+    if ((rc = table_.remove(slots_[idx].fd, slots_[idx].num)) ||
+        (rc = this->unlink(idx)) || (rc = this->insert_free(idx))) {
+      return rc;
+    }
+  }
+
+  return OK_RC;
+}
+
+/*
+ * flush_buffer
+ *
+ * Desc: public. flush all dirty pages to file and recycle all unpinned pages
+ *       to free list;
+ * In: Null
+ * Ret: PF return code;
+ */
+RC PFBuffer::flush_buffer() {
+  RC rc = OK_RC;
+  std::vector<int32_t> temp;
+
+  // iterator for the used list
+  for (int32_t slot = last_; slot != INVALID_SLOT; slot = slots_[slot].prev) {
+    if (slots_[slot].is_dirty && slots_[slot].fd != MEMORY_FD) {
+      // write back the dirty pages except the MEMORY_FD
+      if ((rc = write_back(slots_[slot].fd, slots_[slot].num,
+                           slots_[slot].buffer)))
+        return rc;
+      slots_[slot].is_dirty = false;
+    }
+
+    if (slots_[slot].count == 0) {
+      // recycle the unused page to free list. due to the list iterator, lazy.
+      temp.push_back(slot);
+    }
+  }
+
+  // perform the recycle
+  for (const int32_t idx : temp) {
+    if ((rc = table_.remove(slots_[idx].fd, slots_[idx].num)) ||
+        (rc = this->unlink(idx)) || (rc = this->insert_free(idx))) {
+      return rc;
+    }
+  }
+
+  return OK_RC;
+}
+
+/*
+ * fetch_avaliable_slot - 获取一个可用的slot 使用LRU
+ */
+RC PFBuffer::fetch_avaliable_slot(int32_t &slot) {
+  RC rc = OK_RC;
+  slot = INVALID_SLOT;
   if (free_ != INVALID_SLOT) {
     slot = free_;
     free_ = slots_[slot].next;
-    return slot;
-  }
-  // 如果缓存中已经没有一个空的页了，则需要进行淘汰。
-  for (slot = last_; slot != INVALID_SLOT; slot = slots_[slot].prev) {
-    if (slots_[slot].count == 0)
-      break;
-  }
+  } else {
+    // 如果缓存中已经没有一个空的页了，则需要进行淘汰。
+    for (slot = last_; slot != INVALID_SLOT; slot = slots_[slot].prev) {
+      if (slots_[slot].count == 0)
+        break;
+    }
 
-  if (slot == INVALID_SLOT) {
-    return INVALID_SLOT;
-  }
+    if (slot == INVALID_SLOT) {
+      return PF_NOBUF;
+    }
 
-  // 如果是脏页则写入文件
-  if (slots_[slot].is_dirty) {
-    if ((rc =
-           write_back(slots_[slot].fd, slots_[slot].num, slots_[slot].buffer)))
+    // 如果是脏页则写入文件
+    if (slots_[slot].is_dirty) {
+      if ((rc = write_back(slots_[slot].fd, slots_[slot].num,
+                           slots_[slot].buffer)))
+        return rc;
+
+      slots_[slot].is_dirty = false;
+    }
+
+    // remove page from the hash table and slot from the used buffer list
+    if ((rc = table_.remove(slots_[slot].fd, slots_[slot].num)) ||
+        (rc = this->unlink(slot)))
       return rc;
-
-    slots_[slot].is_dirty = false;
   }
 
-  // remove page from the hash table and slot from the used buffer list
-  if ((rc = table_.remove(slots_[slot].fd, slots_[slot].num)) || (rc = this->unlink(slot)))
-    return rc;
-  
+  // link slot at the head of the used list
   if ((rc = link_head(slot)))
     return rc;
-  return slot;
+
+  return OK_RC;
 }
 
 /*
@@ -182,16 +364,15 @@ RC PFBuffer::link_head(int32_t slot) {
  * unlink
  *
  * Desc: private. unlink the slot from the used list. Assume that slot is valid
- *       Set prev and next pointers to INVALID_SLOT. The caller is responsible to
- *       either place the unlink page into the free list or the used list.
- * In: slot - slot number to unlink
- * Ret: PF return code
+ *       Set prev and next pointers to INVALID_SLOT. The caller is responsible
+ * to either place the unlink page into the free list or the used list. In: slot
+ * - slot number to unlink Ret: PF return code
  */
 RC PFBuffer::unlink(int32_t slot) {
   // if slot is at the head of list, set first to next element
   if (first_ == slot)
     first_ = slots_[slot].next;
-  
+
   // if slot is at the end of list, set last to previous element
   if (last_ == slot)
     last_ = slots_[slot].prev;
@@ -200,7 +381,7 @@ RC PFBuffer::unlink(int32_t slot) {
   if (slots_[slot].next != INVALID_SLOT)
     slots_[slots_[slot].next].prev = slots_[slot].prev;
 
-  // if slot not at head of list. point prev forward to next 
+  // if slot not at head of list. point prev forward to next
   if (slots_[slot].prev != INVALID_SLOT)
     slots_[slots_[slot].prev].next = slots_[slot].next;
 
@@ -221,6 +402,25 @@ RC PFBuffer::insert_free(int32_t slot) {
   slots_[slot].next = free_;
   slots_[slot].prev = INVALID_SLOT;
   free_ = slot;
+
+  return OK_RC;
+}
+
+/*
+ * init_slot
+ *
+ * Desc: private. Initializ PF_Buffer slot to a newly-pinned page for
+ *       a newly pinned page
+ * In: fd - file descriptor
+ *     num - page number
+ *     slot - slot number
+ * Ret: PF return code
+ */
+RC PFBuffer::init_slot(int32_t fd, Page num, int32_t slot) {
+  slots_[slot].fd = fd;
+  slots_[slot].num = num;
+  slots_[slot].is_dirty = false;
+  slots_[slot].count = 1;
 
   return OK_RC;
 }

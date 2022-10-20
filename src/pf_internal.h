@@ -26,4 +26,6 @@ struct PFFileHdr {
 
 const int32_t PF_FILE_HDR_SIZE = PF_PAGE_SIZE + sizeof(PFPageHdr);
 
+#define MEMORY_FD (-1)
+
 #endif

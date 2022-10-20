@@ -23,4 +23,8 @@ typedef char *Ptr;
 #define START_PF_WARN 1
 #define END_PF_WARN   100
 
+// ALL_PAGES is defined and used by the ForcePages method defined in RM
+// and PF layers
+const int ALL_PAGES = -1;
+
 #endif

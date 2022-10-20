@@ -57,12 +57,12 @@ public:
   RC mark_dirty(int32_t fd, Page num);
   RC unpin(int32_t fd, Page num);
   RC pin(int32_t fd, Page num);
-  RC force_page(int32_t fd, Page num);
-  void clear_file_pages(int32_t fd);
-  RC flush(int32_t fd);
+  RC force_pages(int32_t fd, Page num);
+  RC clear_file_pages(int32_t fd);
+  RC flush_buffer();
 
 private:
-  int32_t fetch_avaliable_slot();
+  RC fetch_avaliable_slot(int32_t &slot);
   RC read_page(int32_t fd, Page num, Ptr dst);
   RC write_back(int32_t fd, Page num, Ptr src);
 
@@ -70,6 +70,7 @@ private:
   RC link_head(int32_t slot);
   RC unlink(int32_t slot);
   RC insert_free(int32_t slot);
+  RC init_slot(int32_t fd, Page, int32_t slot);
 
 private:
   static std::shared_ptr<PFBuffer> instance_;
