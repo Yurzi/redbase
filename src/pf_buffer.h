@@ -2,6 +2,7 @@
 #define __PF_BUFFER_H__
 
 #include <cstdint>
+#include <string>
 
 #include "pf_hashtable.h"
 #include "pf_internal.h"
@@ -39,12 +40,17 @@ struct PF_BufferPageDesc {
 // the worker for buffer pool manager
 class PF_BufferWorker;
 
+enum PF_BufferSchedulerMethod { LRU = 0, CLOCK = 1 };
 
 // the interface for pf buffer pool
 class PF_BufferMgr {
+  friend class PF_BufferWorker;
+
 public:
   // constructor and deconstructor
-  PF_BufferMgr(const int32_t capacity, const int32_t page_size = PF_BUFFER_PAGE_SIZE);
+  PF_BufferMgr(const int32_t capacity,
+               const PF_BufferSchedulerMethod &sched_method = PF_BufferSchedulerMethod::LRU,
+               const int32_t page_size = PF_BUFFER_PAGE_SIZE);
   ~PF_BufferMgr();
 
 public:
@@ -80,9 +86,15 @@ public:
   // dispose of a memory chunk managed by the buffer manager
   RC dispose_block(const char *buffer);
 
+  // switch the memory scheduling method
+  RC switch_schedule(const PF_BufferSchedulerMethod &sched_method);
+
+
 private:
-  PF_BufferPageDesc **m_pool = nullptr;
-  PF_BufferWorker *m_work = nullptr;
+  PF_BufferPageDesc *m_pool = nullptr;
+  PF_HashTable *m_table = nullptr;
+
+  PF_BufferWorker *m_scheduler = nullptr;
 
   int32_t page_size = PF_BUFFER_PAGE_SIZE;
 };

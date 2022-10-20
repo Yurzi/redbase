@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <sys/types.h>
+#include <unistd.h>
 
 namespace redbase {
 int32_t open(const char *pathname, int32_t flags);
