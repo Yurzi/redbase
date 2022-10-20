@@ -61,6 +61,11 @@ public:
   RC clear_file_pages(int32_t fd);
   RC flush_buffer();
 
+public:
+  RC get_block_size(int32_t &length) const;
+  RC alloc_block(Ptr &buffer);
+  RC dispse_block(Ptr buffer);
+
 private:
   RC fetch_avaliable_slot(int32_t &slot);
   RC read_page(int32_t fd, Page num, Ptr dst);

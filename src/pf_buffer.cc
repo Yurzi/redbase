@@ -1,6 +1,7 @@
 #include "pf_buffer.h"
 #include "pf_error.h"
 #include "pf_internal.h"
+#include "pf_meta.h"
 #include "redbase_meta.h"
 #include "utils.h"
 #include <cstdint>
@@ -266,6 +267,60 @@ RC PFBuffer::flush_buffer() {
   }
 
   return OK_RC;
+}
+
+/*
+ * get_block_size
+ *
+ * Desc: just return size of the page, since a block will take up a page in
+ *       buffer pool
+ * In: length - the length of block will return
+ * Ret: PF return code
+ */
+RC PFBuffer::get_block_size(int32_t &length) const {
+  length = pagesize;
+  return OK_RC;
+}
+
+/*
+ * alloc_block
+ *
+ * Desc: allocate a page in the buffer pool that is not associated with a
+ *       particular file and returns the pointer to the data area back to
+ *       the user.
+ * In: buffer - a pointer to the allocated page
+ * Ret: PF return code
+ */
+RC PFBuffer::alloc_block(Ptr &buffer) {
+  RC rc = OK_RC;
+  int32_t slot = INVALID_SLOT;
+  if ((rc = fetch_avaliable_slot(slot)) != OK_RC)
+    return rc;
+
+  // create artificial page number (just needs to be unique for hash table)
+  int32_t temp = (int64_t)(slots_[slot].buffer);
+  Page num = Page(temp);
+
+  // insert the page into the hash table, add initialize the page descriptor
+  if ((rc = table_.insert(MEMORY_FD, num, slot) != OK_RC) ||
+      (rc = init_slot(MEMORY_FD, num, slot) != OK_RC)) {
+    this->unlink(slot);
+    this->link_head(slot);
+    return rc;
+  }
+  return OK_RC;
+}
+
+/*
+ * dispose_block
+ *
+ * Desc: free the block of memory from the buffer pool
+ * In: buffer - a pointer to the page
+ * Ret: PF return code
+ */
+RC PFBuffer::dispse_block(Ptr buffer) {
+  int32_t temp = (int64_t)buffer;
+  return unpin(MEMORY_FD, temp);
 }
 
 /*
